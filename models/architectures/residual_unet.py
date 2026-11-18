@@ -1,3 +1,6 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 """
 This architecture is an adapted and modified representation of the workflow described in:
 
@@ -5,48 +8,42 @@ Keikhosravi et al. (2020), "Non-disruptive collagen characterization in clinical
 Original implementation:
 https://github.com/uw-loci/he_shg_synth_workflow
 """
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
 
-"""
-Processed skip connection
-
-    Conv(k=3,s=1) -> BNorm -> LeakyReLU -> Conv(k=1,s=1) -> BNorm -> LeakyReLU
-"""
 class Skip(nn.Module):
-  def __init__(self, in_ch, out_ch):
-    super(Skip, self).__init__()
-    self.skip = nn.Sequential(
-      nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=1, padding=1, padding_mode="reflect"),
-      nn.BatchNorm2d(out_ch),
-      nn.LeakyReLU(negative_slope=0.1),
-      nn.Conv2d(out_ch, out_ch, kernel_size=1, stride=1, padding_mode="reflect"),
-      nn.BatchNorm2d(out_ch),
-      nn.LeakyReLU(negative_slope=0.1)
-    )
+    """
+    Processed skip connection
+        Conv(k=3,s=1) -> BNorm -> LeakyReLU -> Conv(k=1,s=1) -> BNorm -> LeakyReLU
+    """
+    def __init__(self, in_ch, out_ch):
+        super(Skip, self).__init__()
+        self.skip = nn.Sequential(
+        nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=1, padding=1, padding_mode="reflect"),
+        nn.BatchNorm2d(out_ch),
+        nn.LeakyReLU(negative_slope=0.1),
+        nn.Conv2d(out_ch, out_ch, kernel_size=1, stride=1),
+        nn.BatchNorm2d(out_ch),
+        nn.LeakyReLU(negative_slope=0.1)
+        )
 
-  def forward(self, x):
-    return self.skip(x)
-
-"""
-Residual downsampling block, H,W -> H/2, W/2.
-
-    main:     Conv(k=4,s=2) -> BNorm -> LeakyReLU -> Conv(k=1,s=1) -> BNorm -> LeakyReLU
-    residual: Conv(k=2,s=2)
-    out = main(x) + residual(x)
-Both paths stride 2, shapes match and enable for adding.
-"""
+    def forward(self, x):
+        return self.skip(x)
 
 class EncodeDownsample(nn.Module):
+    """
+    Residual downsampling block, H,W -> H/2, W/2.
+        main:     Conv(k=4,s=2) -> BNorm -> LeakyReLU -> Conv(k=1,s=1) -> BNorm -> LeakyReLU
+        residual: Conv(k=2,s=2)
+        out = main(x) + residual(x)
+    Both paths stride 2.
+    """
     def __init__(self, in_size, out_size, dropout=0.0):
         super(EncodeDownsample, self).__init__()
         layers = [
             nn.Conv2d(in_size, out_size, kernel_size=4, stride=2, padding=1, padding_mode="reflect"),
             nn.BatchNorm2d(out_size),
             nn.LeakyReLU(negative_slope=0.1),
-            nn.Conv2d(out_size, out_size, kernel_size=1, stride=1, bias=False, padding_mode="reflect"),
+            nn.Conv2d(out_size, out_size, kernel_size=1, stride=1, bias=False),
             nn.BatchNorm2d(out_size),
             nn.LeakyReLU(negative_slope=0.1)
         ]
@@ -55,7 +52,7 @@ class EncodeDownsample(nn.Module):
             layers.append(nn.Dropout(dropout))
 
         residual = [
-            nn.Conv2d(in_size, out_size, kernel_size=2, stride=2, bias=False, padding_mode="reflect"),
+            nn.Conv2d(in_size, out_size, kernel_size=2, stride=2, bias=False),
         ]
 
         self.main = nn.Sequential(*layers)
@@ -64,16 +61,16 @@ class EncodeDownsample(nn.Module):
     def forward(self, x):
         return self.main(x) + self.residual(x)
 
-"""
-Residual upsampling block + skip fusion, H,W -> 2H, 2W.
-
-    x = Upsample(x, scale=2)        # bilinear; avoids transposed-conv checkerboard
-    main:     Conv(k=3,s=1) -> BNorm -> ReLU -> Conv(k=1,s=1) -> BNorm -> ReLU
-    residual: Conv(k=1,s=1)
-    out = Channel_cat( main(x) + residual(x),  skip_connection)
-"""
 
 class DecodeUpsample(nn.Module):
+    """
+    Residual upsampling block + skip fusion, H,W -> 2H, 2W.
+
+        x = Upsample(x, scale=2)        # bilinear; avoids transposed-conv checkerboard
+        main:     Conv(k=3,s=1) -> BNorm -> ReLU -> Conv(k=1,s=1) -> BNorm -> ReLU
+        residual: Conv(k=1,s=1)
+        out = Channel_cat( main(x) + residual(x),  skip_connection)
+    """
     def __init__(self, in_size, out_size, dropout=0.0):
         super(DecodeUpsample, self).__init__()
 
@@ -81,7 +78,7 @@ class DecodeUpsample(nn.Module):
             nn.Conv2d(in_size, out_size, kernel_size=3, stride=1, padding=1, padding_mode="reflect"),
             nn.BatchNorm2d(out_size),
             nn.ReLU(inplace=True),
-            nn.Conv2d(out_size, out_size, kernel_size=1, stride=1, bias=False, padding_mode="reflect"),
+            nn.Conv2d(out_size, out_size, kernel_size=1, stride=1, bias=False),
             nn.BatchNorm2d(out_size),
             nn.ReLU(inplace=True),
         ]
@@ -89,7 +86,7 @@ class DecodeUpsample(nn.Module):
             layers.append(nn.Dropout(dropout))
 
         residual = [
-            nn.Conv2d(in_size, out_size, kernel_size=1, stride=1, bias=False, padding_mode="reflect"),
+            nn.Conv2d(in_size, out_size, kernel_size=1, stride=1, bias=False),
         ]
 
         self.main = nn.Sequential(*layers)
@@ -101,19 +98,19 @@ class DecodeUpsample(nn.Module):
         x = torch.cat((x, skip_input), dim=1)
         return x
 
-"""
-Residual U-Net, 512x512 -> 512x512.
-
-Encoder d1..d6 resolution:  256 -> 128 -> 64 -> 32 -> 16 -> 8   (input 512)
-Decoder Channel_cats skip(d_k) at each step, so up2 onward take doubled channels.
-
-Output head:
-    Conv(k=3,s=1):    128 -> 4*out_channels
-    PixelShuffle(2):  (4*out, H, W) -> (out, 2H, 2W)   # 256 -> 512
-    Sigmoid:          range -> [0, 1]
-"""
 
 class ResidualUnet(nn.Module):
+    """
+    Residual U-Net, 512x512 -> 512x512.
+
+    Encoder d1..d6 resolution:  256 -> 128 -> 64 -> 32 -> 16 -> 8   (input 512)
+    Decoder Channel_cats skip(d_k) at each step, so up2 onward take doubled channels.
+
+    Output head:
+        Conv(k=3,s=1):    128 -> 4*out_channels
+        PixelShuffle(2):  (4*out, H, W) -> (out, 2H, 2W)   # 256 -> 512
+        Sigmoid:          range -> [0, 1]
+    """
     def __init__(self, in_channels=3, out_channels=3):
         super(ResidualUnet, self).__init__()
 
