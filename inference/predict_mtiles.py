@@ -43,7 +43,7 @@ from tqdm import tqdm
 
 ROOT = Path("/.../repository root/")
 sys.path.append(str(ROOT))
-from models.architectures.keikhosravi_unet import KeikhosraviUnet 
+from models.architectures.residual_unet import ResidualUnet 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
